@@ -1,0 +1,13 @@
+model/
+llama.cpp/
+__pycache__/
+*.pyc
+
+frontend/node_modules/
+frontend/dist/
+
+.venv/
+venv/
+
+.DS_Store
+Thumbs.db
