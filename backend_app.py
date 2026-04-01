@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
+import zipfile
 from queue import Queue
 from threading import Thread
 from typing import Any
@@ -37,11 +40,17 @@ class ProjectFileRequest(BaseModel):
     filename: str
     content: str
     language: str = "plaintext"
+    kind: str = "text"
 
 
 class ProjectActionRequest(BaseModel):
     files: list[ProjectFileRequest]
     instruction: str = ""
+
+
+class ProjectArchiveRequest(BaseModel):
+    project_name: str = "project"
+    files: list[ProjectFileRequest]
 
 
 class ChatMessageRequest(BaseModel):
@@ -309,6 +318,32 @@ def _stream_chat_events(request: ChatRequest):
         yield json.dumps(item, ensure_ascii=False) + "\n"
 
 
+def _project_archive_bytes(request: ProjectArchiveRequest) -> io.BytesIO:
+    if not request.files:
+        raise HTTPException(status_code=400, detail="Project files are empty.")
+
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for file in request.files:
+            if not file.filename.strip():
+                continue
+
+            if file.kind == "image" and file.content.startswith("data:"):
+                try:
+                    _, encoded = file.content.split(",", 1)
+                    archive.writestr(file.filename, base64.b64decode(encoded))
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to encode image file for archive: {file.filename}",
+                    ) from exc
+            else:
+                archive.writestr(file.filename, file.content.encode("utf-8"))
+
+    archive_buffer.seek(0)
+    return archive_buffer
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -361,6 +396,21 @@ def chat_stream(request: ChatRequest) -> StreamingResponse:
     return StreamingResponse(
         _stream_chat_events(request),
         media_type="application/x-ndjson",
+    )
+
+
+@app.post("/api/project/archive")
+def project_archive(request: ProjectArchiveRequest) -> StreamingResponse:
+    archive_buffer = _project_archive_bytes(request)
+    safe_name = request.project_name.strip() or "project"
+    safe_name = safe_name.replace("/", "_").replace("\\", "_")
+
+    return StreamingResponse(
+        archive_buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}.zip"',
+        },
     )
 
 
