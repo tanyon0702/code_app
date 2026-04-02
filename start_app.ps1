@@ -31,12 +31,8 @@ function Test-BackendDependencies {
         [string]$PythonCommand
     )
 
-    try {
-        & $PythonCommand -c "import fastapi, uvicorn" | Out-Null
-        return $true
-    } catch {
-        return $false
-    }
+    & $PythonCommand -c "import fastapi, uvicorn" *> $null
+    return $LASTEXITCODE -eq 0
 }
 
 function Resolve-LlamaServerPath {
@@ -68,8 +64,12 @@ function Resolve-ModelPath {
 function Assert-Ready {
     $pythonCommand = Get-PythonCommand
 
+    if (-not (Test-Path $venvPython)) {
+        throw "Virtual environment was not found at .\.venv. Run .\setup_app.bat first."
+    }
+
     if (-not (Test-BackendDependencies -PythonCommand $pythonCommand)) {
-        throw "Backend dependencies are missing. Run .\setup_app.bat first."
+        throw "Backend dependencies are missing in .\.venv. Run .\setup_app.bat first."
     }
 
     if (-not (Test-Path (Join-Path $frontendRoot "node_modules"))) {

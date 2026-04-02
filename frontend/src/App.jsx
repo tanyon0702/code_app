@@ -1,279 +1,50 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import AppHeader from "./components/AppHeader";
+import AssistantModal from "./components/AssistantModal";
+import ChatModal from "./components/ChatModal";
+import EditorPanel from "./components/EditorPanel";
+import ProjectFixComposerModal from "./components/ProjectFixComposerModal";
+import ProjectSidebar from "./components/ProjectSidebar";
+import ProjectTabs from "./components/ProjectTabs";
+import { buildProjectFixDiffs } from "./utils/diffUtils";
+import {
+  buildFileTree,
+  downloadTextFile,
+  getBaseName,
+  getParentPath,
+  inferFileKind,
+  inferLanguage,
+  joinPath,
+  parseProjectFixResult,
+  readFileAsDataUrl,
+  readFileAsText,
+} from "./utils/fileUtils";
+import {
+  createProject,
+  loadStoredState,
+  saveStoredState,
+} from "./utils/projectStorage";
+import { readNdjsonStream } from "./utils/streamUtils";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8001";
-const STORAGE_KEY = "code-assistant-projects-v1";
 
-function inferLanguage(filename) {
-  const extension = filename.split(".").pop()?.toLowerCase() ?? "";
-  const map = {
-    js: "javascript",
-    jsx: "javascript",
-    ts: "typescript",
-    tsx: "typescript",
-    py: "python",
-    rs: "rust",
-    java: "java",
-    cs: "csharp",
-    cpp: "cpp",
-    c: "c",
-    h: "c",
-    html: "html",
-    css: "css",
-    json: "json",
-    md: "markdown",
-    go: "go",
-    php: "php",
-    rb: "ruby",
-    swift: "swift",
-    kt: "kotlin",
-    sql: "sql",
-    sh: "shell",
-    yml: "yaml",
-    yaml: "yaml",
-  };
-  return map[extension] ?? "plaintext";
-}
-
-function inferFileKind(filename) {
-  const extension = filename.split(".").pop()?.toLowerCase() ?? "";
-  if (["png", "jpg", "jpeg"].includes(extension)) {
-    return "image";
-  }
-  return "text";
-}
-
-function getFileIcon(file) {
-  if (file.kind === "image") {
-    return "🖼";
-  }
-
-  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
-  const iconMap = {
-    js: "🟨",
-    jsx: "⚛",
-    ts: "🔷",
-    tsx: "⚛",
-    py: "🐍",
-    rs: "🦀",
-    html: "🌐",
-    css: "🎨",
-    json: "🧩",
-    md: "📝",
-    yml: "⚙",
-    yaml: "⚙",
-    sh: "⌘",
-    bat: "⌘",
-    ps1: "⌘",
-  };
-
-  return iconMap[extension] ?? "📄";
-}
-
-function getBaseName(path) {
-  const normalized = path.replace(/\\/g, "/");
-  return normalized.split("/").pop() ?? path;
-}
-
-function getParentPath(path) {
-  const normalized = path.replace(/\\/g, "/");
-  const parts = normalized.split("/").filter(Boolean);
-  parts.pop();
-  return parts.join("/");
-}
-
-function joinPath(parentPath, name) {
-  return parentPath ? `${parentPath}/${name}` : name;
-}
-
-function buildFileTree(files, folders) {
-  const root = [];
-  const folderMap = new Map();
-
-  function ensureFolder(pathParts) {
-    let currentNodes = root;
-    let currentPath = "";
-
-    for (const part of pathParts) {
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-      let folder = folderMap.get(currentPath);
-      if (!folder) {
-        folder = {
-          id: `folder:${currentPath}`,
-          name: part,
-          type: "folder",
-          path: currentPath,
-          children: [],
-        };
-        folderMap.set(currentPath, folder);
-        currentNodes.push(folder);
-      }
-      currentNodes = folder.children;
-    }
-
-    return currentNodes;
-  }
-
-  for (const file of files) {
-    const pathParts = file.path.split("/").filter(Boolean);
-    const fileName = pathParts.pop() ?? file.name;
-    const target = ensureFolder(pathParts);
-    target.push({
-      id: file.id,
-      name: fileName,
-      type: "file",
-      file,
-    });
-  }
-
-  for (const folderPath of folders) {
-    const pathParts = folderPath.split("/").filter(Boolean);
-    ensureFolder(pathParts);
-  }
-
-  const sortNodes = (nodes) => {
-    nodes.sort((left, right) => {
-      if (left.type !== right.type) {
-        return left.type === "folder" ? -1 : 1;
-      }
-      return left.name.localeCompare(right.name);
-    });
-    for (const node of nodes) {
-      if (node.type === "folder") {
-        sortNodes(node.children);
-      }
-    }
-  };
-
-  sortNodes(root);
-  return root;
-}
-
-async function readFileAsText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
-    reader.readAsText(file);
-  });
-}
-
-async function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function readNdjsonStream(response, handlers) {
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    for (const line of lines) {
-      if (!line.trim()) {
-        continue;
-      }
-
-      const eventData = JSON.parse(line);
-      handlers?.(eventData);
-    }
-  }
-}
-
-function downloadTextFile(filename, content) {
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function parseProjectFixResult(rawText) {
-  try {
-    const parsed = JSON.parse(rawText);
-    if (!parsed || !Array.isArray(parsed.files)) {
-      return null;
-    }
-    return parsed.files;
-  } catch {
-    const start = rawText.indexOf("{");
-    const end = rawText.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) {
-      return null;
-    }
-    try {
-      const parsed = JSON.parse(rawText.slice(start, end + 1));
-      return Array.isArray(parsed.files) ? parsed.files : null;
-    } catch {
-      return null;
-    }
-  }
-}
-
-function createProject(name = "New Project") {
-  return {
-    id: globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}`,
-    name,
-    files: [],
-    folders: [],
-    selectedFileId: null,
-    selectedNodePath: "",
-    selectedNodeType: "root",
-  };
-}
-
-function createInitialProjects() {
-  return [createProject("Project 1")];
-}
-
-function loadStoredProjects() {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return createInitialProjects();
-    }
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return createInitialProjects();
-    }
-
-    return parsed.map((project, index) => ({
-      id: project.id ?? globalThis.crypto?.randomUUID?.() ?? `project-${Date.now()}-${index}`,
-      name: project.name ?? `Project ${index + 1}`,
-      files: Array.isArray(project.files) ? project.files : [],
-      folders: Array.isArray(project.folders) ? project.folders : [],
-      selectedFileId: project.selectedFileId ?? null,
-      selectedNodePath: project.selectedNodePath ?? "",
-      selectedNodeType: project.selectedNodeType ?? "root",
-    }));
-  } catch {
-    return createInitialProjects();
-  }
-}
+const INITIAL_CHAT_MESSAGE = {
+  id: globalThis.crypto?.randomUUID?.() ?? "chat-welcome",
+  role: "assistant",
+  content: "質問を入力してください。必要なら先に現在のコードを読み込ませられます。",
+};
 
 export default function App() {
-  const [projects, setProjects] = useState(loadStoredProjects);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const storedState = useMemo(() => loadStoredState(), []);
+
+  const [projects, setProjects] = useState(storedState.projects);
+  const [selectedProjectId, setSelectedProjectId] = useState(storedState.selectedProjectId);
   const [status, setStatus] = useState("ファイルを追加してください");
   const [toolBusy, setToolBusy] = useState(false);
   const [toolModal, setToolModal] = useState({ open: false, mode: "", title: "", content: "" });
   const [fixPreview, setFixPreview] = useState("");
   const [projectFixPreview, setProjectFixPreview] = useState([]);
+  const [projectFixDiffs, setProjectFixDiffs] = useState([]);
   const [dragActive, setDragActive] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState(null);
   const [editingProjectName, setEditingProjectName] = useState("");
@@ -284,13 +55,7 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatBusy, setChatBusy] = useState(false);
   const [chatInput, setChatInput] = useState("");
-  const [chatMessages, setChatMessages] = useState([
-    {
-      id: globalThis.crypto?.randomUUID?.() ?? "chat-welcome",
-      role: "assistant",
-      content: "質問を入力してください。必要なら先に現在のコードを読み込ませられます。",
-    },
-  ]);
+  const [chatMessages, setChatMessages] = useState([INITIAL_CHAT_MESSAGE]);
   const [chatContext, setChatContext] = useState(null);
   const inputRef = useRef(null);
   const chatBodyRef = useRef(null);
@@ -308,14 +73,18 @@ export default function App() {
   const fileTree = useMemo(() => buildFileTree(files, folders), [files, folders]);
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
-  }, [projects]);
+    saveStoredState(projects, selectedProjectId);
+  }, [projects, selectedProjectId]);
 
   useEffect(() => {
     if (!selectedProjectId && projects[0]?.id) {
       setSelectedProjectId(projects[0].id);
     }
   }, [projects, selectedProjectId]);
+
+  function closeToolModal() {
+    setToolModal({ open: false, mode: "", title: "", content: "" });
+  }
 
   function patchSelectedProject(updater) {
     setProjects((current) =>
@@ -324,14 +93,10 @@ export default function App() {
   }
 
   function createNewProject() {
-    const name = window.prompt("プロジェクト名を入力してください。", `Project ${projects.length + 1}`)?.trim();
-    if (!name) {
-      return;
-    }
-    const project = createProject(name);
+    const project = createProject(`Project ${projects.length + 1}`);
     setProjects((current) => [...current, project]);
     setSelectedProjectId(project.id);
-    setStatus(`Created ${name}`);
+    setStatus(`Created ${project.name}`);
   }
 
   function startProjectRename(project) {
@@ -341,10 +106,7 @@ export default function App() {
 
   function commitProjectRename() {
     const nextName = editingProjectName.trim();
-    if (!editingProjectId) {
-      return;
-    }
-    if (!nextName) {
+    if (!editingProjectId || !nextName) {
       setEditingProjectId(null);
       setEditingProjectName("");
       return;
@@ -366,7 +128,7 @@ export default function App() {
   }
 
   function saveProjectsToApp() {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(projects));
+    saveStoredState(projects, selectedProjectId);
     setStatus("アプリ内に保存しました");
   }
 
@@ -377,7 +139,7 @@ export default function App() {
       }
       const remaining = current.filter((project) => project.id !== projectId);
       if (selectedProjectId === projectId) {
-        setSelectedProjectId(remaining[0].id);
+        setSelectedProjectId(remaining[0]?.id ?? "");
       }
       return remaining;
     });
@@ -392,6 +154,7 @@ export default function App() {
       uploadedFiles.map(async (file) => {
         const kind = inferFileKind(file.name);
         const relativePath = file.webkitRelativePath?.replace(/\\/g, "/") || file.name;
+
         return {
           id: globalThis.crypto?.randomUUID?.() ?? `${file.name}-${Date.now()}`,
           name: getBaseName(relativePath),
@@ -410,9 +173,7 @@ export default function App() {
       folders: Array.from(
         new Set([
           ...project.folders,
-          ...loadedFiles
-            .map((file) => getParentPath(file.path))
-            .filter(Boolean),
+          ...loadedFiles.map((file) => getParentPath(file.path)).filter(Boolean),
         ]),
       ),
       selectedNodePath: project.selectedNodePath || loadedFiles[0].path,
@@ -438,9 +199,12 @@ export default function App() {
     if (!selectedFile) {
       return;
     }
+
     patchSelectedProject((project) => ({
       ...project,
-      files: project.files.map((file) => (file.id === selectedFile.id ? { ...file, content: nextContent } : file)),
+      files: project.files.map((file) =>
+        file.id === selectedFile.id ? { ...file, content: nextContent } : file,
+      ),
     }));
   }
 
@@ -457,6 +221,30 @@ export default function App() {
           project.selectedFileId === fileId ? (remaining[0] ? "file" : project.selectedNodeType) : project.selectedNodeType,
       };
     });
+  }
+
+  function selectFolder(path) {
+    patchSelectedProject((project) => ({
+      ...project,
+      selectedNodePath: path,
+      selectedNodeType: "folder",
+    }));
+  }
+
+  function toggleFolder(path) {
+    setCollapsedFolders((current) => ({
+      ...current,
+      [path]: !current[path],
+    }));
+  }
+
+  function selectFile(fileId, path) {
+    patchSelectedProject((project) => ({
+      ...project,
+      selectedFileId: fileId,
+      selectedNodePath: path,
+      selectedNodeType: "file",
+    }));
   }
 
   function getTargetFolderPath() {
@@ -476,12 +264,11 @@ export default function App() {
     if (!selectedProject) {
       return;
     }
-    const parentPath = getTargetFolderPath();
     setEditingNode({
       mode: "create-file",
       type: "file",
       path: "__new_file__",
-      parentPath,
+      parentPath: getTargetFolderPath(),
       draft: "new_file.py",
     });
   }
@@ -527,6 +314,10 @@ export default function App() {
         draft: getBaseName(currentPath),
       });
     }
+  }
+
+  function updateEditingNodeDraft(nextDraft) {
+    setEditingNode((current) => (current ? { ...current, draft: nextDraft } : current));
   }
 
   function commitEditingNode() {
@@ -591,11 +382,11 @@ export default function App() {
     }
 
     if (editingNode.mode === "rename-file" && selectedFile) {
+      const nextPath = joinPath(editingNode.parentPath, nextName);
       if (nextName === selectedFile.name) {
         setEditingNode(null);
         return;
       }
-      const nextPath = joinPath(editingNode.parentPath, nextName);
       if (files.some((file) => file.id !== selectedFile.id && file.path === nextPath)) {
         setStatus("同名ファイルが既にあります");
         return;
@@ -650,6 +441,7 @@ export default function App() {
         ),
         selectedNodePath: nextPath,
       }));
+
       setCollapsedFolders((current) => {
         const next = { ...current };
         for (const key of Object.keys(current)) {
@@ -661,6 +453,7 @@ export default function App() {
         }
         return next;
       });
+
       setStatus(`Renamed folder to ${nextPath}`);
       setEditingNode(null);
     }
@@ -752,13 +545,13 @@ export default function App() {
       return;
     }
 
-    const nextUserMessage = {
+    const userMessage = {
       id: globalThis.crypto?.randomUUID?.() ?? `chat-user-${Date.now()}`,
       role: "user",
       content: prompt,
     };
     const assistantId = globalThis.crypto?.randomUUID?.() ?? `chat-assistant-${Date.now()}`;
-    const nextMessages = [...chatMessages, nextUserMessage];
+    const nextMessages = [...chatMessages, userMessage];
 
     setChatMessages([...nextMessages, { id: assistantId, role: "assistant", content: "" }]);
     setChatInput("");
@@ -766,7 +559,7 @@ export default function App() {
     setStatus("チャット送信中...");
 
     const contextText = chatContext
-      ? `ファイル名: ${chatContext.path ?? chatContext.filename}\n言語: ${chatContext.language}\nコード:\n${chatContext.content}`
+      ? `ファイル名: ${chatContext.path}\n言語: ${chatContext.language}\nコード:\n${chatContext.content}`
       : "";
 
     try {
@@ -810,9 +603,7 @@ export default function App() {
     } catch (error) {
       setChatMessages((current) =>
         current.map((message) =>
-          message.id === assistantId
-            ? { ...message, content: `エラー: ${error.message}` }
-            : message,
+          message.id === assistantId ? { ...message, content: `エラー: ${error.message}` } : message,
         ),
       );
       setStatus("エラー");
@@ -912,9 +703,9 @@ export default function App() {
     }
 
     const instruction = action === "fix" ? instructionOverride : "";
-
     setToolBusy(true);
     setProjectFixPreview([]);
+    setProjectFixDiffs([]);
 
     const titleMap = {
       fix: "Project Fix Preview",
@@ -938,6 +729,7 @@ export default function App() {
             filename: file.path,
             content: file.content,
             language: file.language,
+            kind: file.kind,
           })),
           instruction,
         }),
@@ -959,6 +751,7 @@ export default function App() {
             const parsed = parseProjectFixResult(eventData.value);
             if (parsed) {
               setProjectFixPreview(parsed);
+              setProjectFixDiffs(buildProjectFixDiffs(selectedProject.files, parsed));
             }
           }
           return;
@@ -993,8 +786,9 @@ export default function App() {
     if (!selectedFile || selectedFile.kind !== "text" || !fixPreview) {
       return;
     }
+
     updateSelectedFileContent(fixPreview);
-    setToolModal({ open: false, mode: "", title: "", content: "" });
+    closeToolModal();
     setStatus(`Applied fix to ${selectedFile.path}`);
   }
 
@@ -1010,153 +804,12 @@ export default function App() {
         return updated ? { ...file, content: updated.content } : file;
       }),
     }));
-    setToolModal({ open: false, mode: "", title: "", content: "" });
+    closeToolModal();
     setStatus(`Applied project fix to ${selectedProject.name}`);
   }
 
-  function toggleFolder(path) {
-    setCollapsedFolders((current) => ({
-      ...current,
-      [path]: !current[path],
-    }));
-  }
-
-  function renderTreeNodes(nodes, depth = 0) {
-    const rendered = nodes.map((node) => {
-      if (node.type === "folder") {
-        const collapsed = Boolean(collapsedFolders[node.path]);
-        return (
-          <div key={node.id} className="tree-node">
-            <button
-              className="tree-row folder-row"
-              data-selected={selectedProject?.selectedNodeType === "folder" && selectedProject?.selectedNodePath === node.path}
-              style={{ paddingLeft: `${12 + depth * 16}px` }}
-              onClick={() => {
-                patchSelectedProject((project) => ({
-                  ...project,
-                  selectedNodePath: node.path,
-                  selectedNodeType: "folder",
-                  selectedFileId:
-                    project.selectedNodeType === "file" && project.selectedNodePath === node.path
-                      ? null
-                      : project.selectedFileId,
-                }));
-                toggleFolder(node.path);
-              }}
-            >
-              <span className="tree-caret">{collapsed ? "▸" : "▾"}</span>
-              <span className="tree-icon">📁</span>
-              {editingNode?.type === "folder" && editingNode.path === node.path ? (
-                <input
-                  className="tree-inline-input"
-                  value={editingNode.draft}
-                  autoFocus
-                  onChange={(event) => setEditingNode((current) => (current ? { ...current, draft: event.target.value } : current))}
-                  onBlur={commitEditingNode}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      commitEditingNode();
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      cancelEditingNode();
-                    }
-                  }}
-                  onClick={(event) => event.stopPropagation()}
-                />
-              ) : (
-                <span className="tree-label">{node.name}</span>
-              )}
-            </button>
-            {!collapsed ? renderTreeNodes(node.children, depth + 1) : null}
-          </div>
-        );
-      }
-
-      const file = node.file;
-      return (
-        <div key={node.id} className="tree-node">
-          <button
-            className={`tree-row file-row ${selectedProject?.selectedFileId === file.id ? "selected" : ""}`}
-            style={{ paddingLeft: `${12 + depth * 16}px` }}
-            onClick={() =>
-              patchSelectedProject((project) => ({
-                ...project,
-                selectedFileId: file.id,
-                selectedNodePath: file.path,
-                selectedNodeType: "file",
-              }))
-            }
-          >
-            <span className="tree-caret tree-caret-placeholder">•</span>
-            <span className="tree-icon">{getFileIcon(file)}</span>
-            {editingNode?.type === "file" && editingNode.path === file.path ? (
-              <input
-                className="tree-inline-input"
-                value={editingNode.draft}
-                autoFocus
-                onChange={(event) => setEditingNode((current) => (current ? { ...current, draft: event.target.value } : current))}
-                onBlur={commitEditingNode}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    commitEditingNode();
-                  }
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    cancelEditingNode();
-                  }
-                }}
-                onClick={(event) => event.stopPropagation()}
-              />
-            ) : (
-              <span className="tree-label">{file.name}</span>
-            )}
-            <span className="tree-meta">{file.kind === "image" ? "image" : file.language}</span>
-            <span
-              className="file-remove"
-              onClick={(event) => {
-                event.stopPropagation();
-                removeFile(file.id);
-              }}
-            >
-              Remove
-            </span>
-          </button>
-        </div>
-      );
-    });
-
-    if (editingNode && depth === (editingNode.parentPath ? editingNode.parentPath.split("/").length : 0) && editingNode.mode.startsWith("create-")) {
-      rendered.push(
-        <div key={editingNode.path} className="tree-node">
-          <div className="tree-row file-row creating-row" style={{ paddingLeft: `${12 + depth * 16}px` }}>
-            <span className="tree-caret tree-caret-placeholder">•</span>
-            <span className="tree-icon">{editingNode.type === "folder" ? "📁" : "📄"}</span>
-            <input
-              className="tree-inline-input"
-              value={editingNode.draft}
-              autoFocus
-              onChange={(event) => setEditingNode((current) => (current ? { ...current, draft: event.target.value } : current))}
-              onBlur={commitEditingNode}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  commitEditingNode();
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelEditingNode();
-                }
-              }}
-            />
-          </div>
-        </div>,
-      );
-    }
-
-    return rendered;
+  function clearChat() {
+    setChatMessages([INITIAL_CHAT_MESSAGE]);
   }
 
   return (
@@ -1182,287 +835,71 @@ export default function App() {
       <div className="background-orb orb-one" />
       <div className="background-orb orb-two" />
 
-      <header className="topbar">
-        <div className="topbar-leading">
-          <div className="menu-anchor">
-            <button
-              className={`menu-button ${appMenuOpen ? "open" : ""}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                setAppMenuOpen((current) => !current);
-              }}
-            >
-              <span />
-              <span />
-              <span />
-            </button>
+      <AppHeader
+        status={status}
+        toolBusy={toolBusy}
+        appMenuOpen={appMenuOpen}
+        onToggleAppMenu={() => setAppMenuOpen((current) => !current)}
+        onSaveApp={saveProjectsToApp}
+        onCreateProject={createNewProject}
+        onOpenChat={(event) => {
+          event?.stopPropagation?.();
+          setChatOpen(true);
+        }}
+        onOpenFilePicker={() => inputRef.current?.click()}
+        onOpenFolderPicker={() => document.getElementById("folder-input")?.click()}
+        inputRef={inputRef}
+        onFileUpload={handleFileUpload}
+      />
 
-            {appMenuOpen ? (
-              <div className="app-menu panel" onClick={(event) => event.stopPropagation()}>
-                <p className="panel-kicker">App Menu</p>
-                <div className="control-section inline menu-section">
-                  <span className="control-label">Project</span>
-                  <div className="control-buttons">
-                    <button className="ghost-button compact" onClick={saveProjectsToApp}>
-                      Save App
-                    </button>
-                    <button className="ghost-button compact" onClick={createNewProject}>
-                      New Project
-                    </button>
-                  </div>
-                </div>
-                <div className="control-section inline menu-section">
-                  <span className="control-label">Import</span>
-                  <div className="control-buttons">
-                    <button className="ghost-button compact" onClick={() => inputRef.current?.click()}>
-                      Upload Files
-                    </button>
-                    <button className="ghost-button compact" onClick={() => document.getElementById("folder-input")?.click()}>
-                      Upload Folder
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="hero-block">
-            <p className="eyebrow">Local LLM Code Assistant</p>
-            <h1>Fix, Review, Explain</h1>
-          </div>
-        </div>
-        <div className="topbar-controls">
-          <span className={`status-pill ${toolBusy ? "live" : ""}`}>{status}</span>
-        </div>
-        <input
-          ref={inputRef}
-          className="hidden-input"
-          type="file"
-          multiple
-          onChange={handleFileUpload}
-        />
-        <input
-          id="folder-input"
-          className="hidden-input"
-          type="file"
-          multiple
-          webkitdirectory="true"
-          directory="true"
-          onChange={handleFileUpload}
-        />
-      </header>
-
-      <section className="project-strip">
-        {projects.map((project) => (
-          <button
-            key={project.id}
-            className={`project-tab ${project.id === selectedProjectId ? "selected" : ""}`}
-            onClick={() => setSelectedProjectId(project.id)}
-            onDoubleClick={() => startProjectRename(project)}
-          >
-            {editingProjectId === project.id ? (
-              <input
-                className="project-tab-input"
-                value={editingProjectName}
-                autoFocus
-                onChange={(event) => setEditingProjectName(event.target.value)}
-                onBlur={commitProjectRename}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    commitProjectRename();
-                  }
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    cancelProjectRename();
-                  }
-                }}
-                onClick={(event) => event.stopPropagation()}
-              />
-            ) : (
-              <span>{project.name}</span>
-            )}
-            {projects.length > 1 ? (
-              <span
-                className="project-remove"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  removeProject(project.id);
-                }}
-              >
-                ×
-              </span>
-            ) : null}
-          </button>
-        ))}
-      </section>
+      <ProjectTabs
+        projects={projects}
+        selectedProjectId={selectedProjectId}
+        editingProjectId={editingProjectId}
+        editingProjectName={editingProjectName}
+        onSelectProject={setSelectedProjectId}
+        onStartRenameProject={startProjectRename}
+        onChangeEditingProjectName={setEditingProjectName}
+        onCommitProjectRename={commitProjectRename}
+        onCancelProjectRename={cancelProjectRename}
+        onRemoveProject={removeProject}
+      />
 
       <main className="workspace-grid code-layout">
-        <aside className="panel file-panel">
-          <div className="panel-header">
-            <div>
-              <p className="panel-kicker">Project</p>
-              <h2>{selectedProject?.name ?? "Files"}</h2>
-            </div>
-            <span className="subtle-pill">{files.length} files</span>
-          </div>
+        <ProjectSidebar
+          selectedProject={selectedProject}
+          files={files}
+          fileTree={fileTree}
+          toolBusy={toolBusy}
+          collapsedFolders={collapsedFolders}
+          editingNode={editingNode}
+          onStartRenameProject={startProjectRename}
+          onCreateEmptyFile={createEmptyFile}
+          onCreateFolder={createFolder}
+          onRenameSelectedNode={renameSelectedNode}
+          onDownloadProjectArchive={downloadProjectArchive}
+          onOpenProjectFixComposer={openProjectFixComposer}
+          onRunProjectAdvice={() => runProjectAction("advice")}
+          onRunProjectExplain={() => runProjectAction("explain")}
+          onSelectFolder={selectFolder}
+          onToggleFolder={toggleFolder}
+          onSelectFile={selectFile}
+          onRemoveFile={removeFile}
+          onUpdateEditingNodeDraft={updateEditingNodeDraft}
+          onCommitEditingNode={commitEditingNode}
+          onCancelEditingNode={cancelEditingNode}
+        />
 
-          <div className="project-actions">
-            <div className="control-section">
-              <span className="control-label">Manage</span>
-              <div className="control-buttons">
-                <button
-                  className="ghost-button compact"
-                  onClick={() => selectedProject && startProjectRename(selectedProject)}
-                  disabled={!selectedProject}
-                >
-                  Rename Project
-                </button>
-                <button className="ghost-button compact" onClick={createEmptyFile}>
-                  New File
-                </button>
-                <button className="ghost-button compact" onClick={createFolder}>
-                  New Folder
-                </button>
-                <button
-                  className="ghost-button compact"
-                  onClick={renameSelectedNode}
-                  disabled={!selectedProject || selectedProject.selectedNodeType === "root"}
-                >
-                  Rename Node
-                </button>
-                <button
-                  className="ghost-button compact"
-                  onClick={downloadProjectArchive}
-                  disabled={files.length === 0}
-                >
-                  Download ZIP
-                </button>
-              </div>
-            </div>
-
-            <div className="control-section">
-              <span className="control-label">Project AI</span>
-              <div className="control-buttons">
-                <button
-                  className="ghost-button compact accent"
-                  onClick={openProjectFixComposer}
-                  disabled={files.length === 0 || toolBusy}
-                >
-                  Project Fix
-                </button>
-                <button
-                  className="ghost-button compact"
-                  onClick={() => runProjectAction("advice")}
-                  disabled={files.length === 0 || toolBusy}
-                >
-                  Feedback
-                </button>
-                <button
-                  className="ghost-button compact"
-                  onClick={() => runProjectAction("explain")}
-                  disabled={files.length === 0 || toolBusy}
-                >
-                  Explain
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="file-list tree-list">
-            {files.length === 0 ? (
-              <div className="empty-state">アップロードしたファイルがここに表示されます。</div>
-            ) : null}
-            {renderTreeNodes(fileTree)}
-          </div>
-        </aside>
-
-        <section className="panel editor-panel">
-          <div className="panel-header">
-            <div>
-              <p className="panel-kicker">Code</p>
-              <h2>{selectedFile?.name ?? "No file selected"}</h2>
-            </div>
-            <div className="action-cluster">
-              <div className="control-section inline">
-                <span className="control-label">File</span>
-                <div className="control-buttons">
-                  <button
-                    className="ghost-button compact"
-                    onClick={() => selectedFile && downloadTextFile(selectedFile.name, selectedFile.content)}
-                    disabled={!selectedFile}
-                  >
-                    Download
-                  </button>
-                  <button
-                    className="ghost-button compact"
-                    onClick={loadCurrentCodeIntoChat}
-                    disabled={!selectedFile || selectedFile.kind !== "text"}
-                  >
-                    Read In Chat
-                  </button>
-                </div>
-              </div>
-              <div className="control-section inline">
-                <span className="control-label">File AI</span>
-                <div className="control-buttons">
-                  <button
-                    className="ghost-button compact accent"
-                    onClick={() => runCodeAction("fix")}
-                    disabled={!selectedFile || selectedFile.kind !== "text" || toolBusy}
-                  >
-                    Fix
-                  </button>
-                  <button
-                    className="ghost-button compact"
-                    onClick={() => runCodeAction("advice")}
-                    disabled={!selectedFile || selectedFile.kind !== "text" || toolBusy}
-                  >
-                    Feedback
-                  </button>
-                  <button
-                    className="ghost-button compact"
-                    onClick={() => runCodeAction("explain")}
-                    disabled={!selectedFile || selectedFile.kind !== "text" || toolBusy}
-                  >
-                    Explain
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {selectedFile ? (
-            <>
-              <div className="file-meta">
-                <span>{selectedFile.kind === "image" ? "image" : selectedFile.language}</span>
-                <span>{selectedFile.path}</span>
-                {selectedFile.kind === "text" ? (
-                  <>
-                    <span>{selectedFile.content.split("\n").length} lines</span>
-                    <span>{selectedFile.content.length} chars</span>
-                  </>
-                ) : null}
-              </div>
-              {selectedFile.kind === "image" ? (
-                <div className="image-viewer">
-                  <img className="image-preview" src={selectedFile.content} alt={selectedFile.name} />
-                </div>
-              ) : (
-                <textarea
-                  className="code-editor"
-                  value={selectedFile.content}
-                  onChange={(event) => updateSelectedFileContent(event.target.value)}
-                  spellCheck={false}
-                />
-              )}
-            </>
-          ) : (
-            <div className="empty-editor">
-              <p>まずコードファイルをアップロードしてください。</p>
-            </div>
-          )}
-        </section>
+        <EditorPanel
+          selectedFile={selectedFile}
+          toolBusy={toolBusy}
+          onLoadCurrentCodeIntoChat={loadCurrentCodeIntoChat}
+          onRunFix={() => runCodeAction("fix")}
+          onRunAdvice={() => runCodeAction("advice")}
+          onRunExplain={() => runCodeAction("explain")}
+          onDownloadSelectedFile={() => selectedFile && downloadTextFile(selectedFile.name, selectedFile.content)}
+          onUpdateSelectedFileContent={updateSelectedFileContent}
+        />
       </main>
 
       {dragActive ? (
@@ -1475,175 +912,40 @@ export default function App() {
         </div>
       ) : null}
 
-      {toolModal.open ? (
-        <div className="chat-modal-backdrop" onClick={() => setToolModal({ open: false, mode: "", title: "", content: "" })}>
-          <section className="tool-modal panel" onClick={(event) => event.stopPropagation()}>
-            <div className="panel-header">
-              <div>
-                <p className="panel-kicker">Assistant Result</p>
-                <h2>{toolModal.title}</h2>
-              </div>
-              <button className="ghost-button" onClick={() => setToolModal({ open: false, mode: "", title: "", content: "" })}>
-                Close
-              </button>
-            </div>
+      <AssistantModal
+        toolModal={toolModal}
+        onClose={closeToolModal}
+        fixPreview={fixPreview}
+        selectedFile={selectedFile}
+        onApplyFix={applyFix}
+        onDownloadFixed={downloadTextFile}
+        projectFixPreview={projectFixPreview}
+        projectFixDiffs={projectFixDiffs}
+        onApplyProjectFix={applyProjectFix}
+      />
 
-            <pre className="tool-output">{toolModal.content || "..."}</pre>
+      <ProjectFixComposerModal
+        open={projectFixComposer.open}
+        instruction={projectFixComposer.instruction}
+        onClose={() => setProjectFixComposer({ open: false, instruction: "" })}
+        onChangeInstruction={(value) => setProjectFixComposer((current) => ({ ...current, instruction: value }))}
+        onSubmit={submitProjectFixComposer}
+      />
 
-            {toolModal.mode === "fix" ? (
-              <div className="tool-actions">
-                <button className="ghost-button" onClick={() => setToolModal({ open: false, mode: "", title: "", content: "" })}>
-                  Cancel
-                </button>
-                <button className="primary-button" onClick={applyFix} disabled={!fixPreview}>
-                  Apply Fix
-                </button>
-                <button
-                  className="ghost-button"
-                  onClick={() => selectedFile && fixPreview && downloadTextFile(`fixed-${selectedFile.name}`, fixPreview)}
-                  disabled={!selectedFile || !fixPreview}
-                >
-                  Download Fixed
-                </button>
-              </div>
-            ) : null}
-
-            {toolModal.mode === "project-fix" ? (
-              <div className="tool-actions">
-                <span className="tool-hint">
-                  {projectFixPreview.length > 0
-                    ? `${projectFixPreview.length} files will be updated`
-                    : "JSONを解析できた場合のみ適用できます"}
-                </span>
-                <button className="ghost-button" onClick={() => setToolModal({ open: false, mode: "", title: "", content: "" })}>
-                  Cancel
-                </button>
-                <button className="primary-button" onClick={applyProjectFix} disabled={projectFixPreview.length === 0}>
-                  Apply Project Fix
-                </button>
-              </div>
-            ) : null}
-          </section>
-        </div>
-      ) : null}
-
-      {projectFixComposer.open ? (
-        <div className="chat-modal-backdrop" onClick={() => setProjectFixComposer({ open: false, instruction: "" })}>
-          <section className="prompt-modal panel" onClick={(event) => event.stopPropagation()}>
-            <div className="panel-header">
-              <div>
-                <p className="panel-kicker">Project Fix</p>
-                <h2>修正要望を入力</h2>
-              </div>
-              <button className="ghost-button" onClick={() => setProjectFixComposer({ open: false, instruction: "" })}>
-                Close
-              </button>
-            </div>
-
-            <p className="prompt-copy">
-              追加の修正要望があれば入力してください。空のまま送ると、自動で全体整合性ベースの修正を行います。
-            </p>
-
-            <textarea
-              className="chat-input"
-              value={projectFixComposer.instruction}
-              onChange={(event) =>
-                setProjectFixComposer((current) => ({ ...current, instruction: event.target.value }))
-              }
-              placeholder="例: API のエラーハンドリングを統一して、型のズレを直して"
-              autoFocus
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-                  event.preventDefault();
-                  submitProjectFixComposer();
-                }
-              }}
-            />
-
-            <div className="tool-actions">
-              <span className="tool-hint">`Ctrl+Enter` で実行</span>
-              <button className="ghost-button" onClick={() => setProjectFixComposer({ open: false, instruction: "" })}>
-                Cancel
-              </button>
-              <button className="primary-button" onClick={submitProjectFixComposer}>
-                Start Project Fix
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      {chatOpen ? (
-        <div className="chat-modal-backdrop" onClick={() => setChatOpen(false)}>
-          <section className="tool-modal panel chat-panel" onClick={(event) => event.stopPropagation()}>
-            <div className="panel-header">
-              <div>
-                <p className="panel-kicker">Code Chat</p>
-                <h2>Ask About Current Code</h2>
-              </div>
-              <div className="action-cluster">
-                <button
-                  className="ghost-button compact"
-                  onClick={loadCurrentCodeIntoChat}
-                  disabled={!selectedFile || selectedFile.kind !== "text"}
-                >
-                  Read Current File
-                </button>
-                <button className="ghost-button" onClick={() => setChatOpen(false)}>
-                  Close
-                </button>
-              </div>
-            </div>
-
-            <div className="chat-context-pill">
-              {chatContext ? `Context: ${chatContext.filename}` : "Context: none"}
-            </div>
-
-            <div className="chat-thread" ref={chatBodyRef}>
-              {chatMessages.map((message) => (
-                <article key={message.id} className={`chat-bubble ${message.role}`}>
-                  <span className="chat-role">{message.role === "user" ? "You" : "AI"}</span>
-                  <p>{message.content || "..."}</p>
-                </article>
-              ))}
-            </div>
-
-            <div className="chat-composer">
-              <textarea
-                className="chat-input"
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-                placeholder="コードについて質問してください"
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    sendChatMessage();
-                  }
-                }}
-              />
-              <div className="tool-actions">
-                <button className="ghost-button" onClick={() => setChatMessages(chatMessages.slice(0, 1))}>
-                  Clear Chat
-                </button>
-                <button className="primary-button" onClick={sendChatMessage} disabled={chatBusy || !chatInput.trim()}>
-                  Send
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
-
-      <button
-        className="chat-fab"
-        onClick={(event) => {
-          event.stopPropagation();
-          setChatOpen(true);
-        }}
-        aria-label="Open chat"
-      >
-        <span className="chat-fab-icon">💬</span>
-      </button>
+      <ChatModal
+        open={chatOpen}
+        chatContext={chatContext}
+        chatMessages={chatMessages}
+        chatInput={chatInput}
+        chatBusy={chatBusy}
+        chatBodyRef={chatBodyRef}
+        selectedFile={selectedFile}
+        onClose={() => setChatOpen(false)}
+        onLoadCurrentCodeIntoChat={loadCurrentCodeIntoChat}
+        onChangeChatInput={setChatInput}
+        onClearChat={clearChat}
+        onSendChatMessage={sendChatMessage}
+      />
     </div>
   );
 }

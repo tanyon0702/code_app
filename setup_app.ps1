@@ -4,7 +4,6 @@ $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $frontendRoot = Join-Path $projectRoot "frontend"
 $venvRoot = Join-Path $projectRoot ".venv"
 $venvPython = Join-Path $venvRoot "Scripts\python.exe"
-$venvPip = Join-Path $venvRoot "Scripts\pip.exe"
 $requirementsPath = Join-Path $projectRoot "requirements.txt"
 $defaultModelPath = Join-Path $projectRoot "model\Qwen3.5-9B-Q4_K_S.gguf"
 $serverCandidates = @(
@@ -50,19 +49,34 @@ function Resolve-ModelPath {
     return $null
 }
 
+function Ensure-VenvReady {
+    if (-not (Test-Path $venvPython)) {
+        Write-Host "Creating virtual environment..."
+        & python -m venv $venvRoot
+    }
+
+    if (-not (Test-Path $venvPython)) {
+        throw "Virtual environment creation failed."
+    }
+
+    & $venvPython -m ensurepip --upgrade | Out-Null
+
+    & $venvPython -m pip --version | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "pip is missing in .venv even after ensurepip."
+    }
+}
+
 Write-Host "Checking required tools..."
 Assert-Command -Name "python"
 Assert-Command -Name "node"
 Assert-Command -Name "npm"
 
-if (-not (Test-Path $venvPython)) {
-    Write-Host "Creating virtual environment..."
-    & python -m venv $venvRoot
-}
+Ensure-VenvReady
 
 Write-Host "Installing backend dependencies..."
 & $venvPython -m pip install --upgrade pip
-& $venvPip install -r $requirementsPath
+& $venvPython -m pip install -r $requirementsPath
 
 Write-Host "Installing frontend dependencies..."
 Push-Location $frontendRoot

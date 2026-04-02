@@ -7,12 +7,13 @@
 
 - 単一ファイルに対する `Fix / Feedback / Explain`
 - プロジェクト全体に対する `Project Fix / Feedback / Explain`
+- `Project Fix` の適用前差分プレビュー
 - 選択中コードを読み込ませたチャット
 - 複数プロジェクト管理
 - フォルダツリー表示
 - 空ファイル作成 / フォルダ作成 / リネーム
 - 画像プレビュー対応 (`png`, `jpg`, `jpeg`)
-- アプリ内保存
+- アプリ内保存 (`localStorage`, versioned)
 - プロジェクトを ZIP でダウンロード
 - フォルダ単位アップロード
 
@@ -31,8 +32,12 @@
 ├─ llama_client.py        # llama-server process manager / streaming client
 ├─ start_app.bat          # one-click launcher (Windows)
 ├─ start_app.ps1          # launcher implementation
+├─ setup_app.bat          # one-click setup (Windows)
+├─ setup_app.ps1          # setup implementation
 ├─ frontend/
-│  ├─ src/App.jsx         # main UI
+│  ├─ src/App.jsx         # app state / action wiring
+│  ├─ src/components/     # UI components
+│  ├─ src/utils/          # pure utilities (storage, diff, file helpers)
 │  ├─ src/styles.css      # UI styles
 │  └─ src-tauri/          # Tauri scaffold
 ├─ model/                 # GGUF model placement directory (git ignored)
@@ -136,6 +141,23 @@ npm run dev
 - [`start_app.bat`](c:/Users/Tanyo/Desktop/Self-evolution%20game/start_app.bat)
   起動前に依存関係とモデル配置をチェックしてからアプリ起動
 
+## Frontend Architecture
+
+フロントエンドは「状態を持つ `App.jsx`」と「表示用コンポーネント」「純粋なユーティリティ」に分けています。
+
+- `frontend/src/App.jsx`
+  状態管理と API 呼び出しの接着点
+- `frontend/src/components/`
+  `AppHeader`, `ProjectSidebar`, `EditorPanel`, `ChatModal` などの表示コンポーネント
+- `frontend/src/utils/fileUtils.js`
+  ファイル種別判定、ツリー構築、アップロード補助
+- `frontend/src/utils/projectStorage.js`
+  保存形式の version 管理と復元
+- `frontend/src/utils/diffUtils.js`
+  `Project Fix` 用の差分プレビュー生成
+- `frontend/src/utils/streamUtils.js`
+  NDJSON ストリーム読取
+
 ## Notes
 
 - `model/` と `llama.cpp/` は Git 管理対象外です。
@@ -146,12 +168,12 @@ npm run dev
 ## Current State
 
 このプロジェクトは「ローカル LLM を使うコード支援ツール」のプロトタイプ兼実験環境です。  
-機能はかなり揃っていますが、フロントエンドはまだ `frontend/src/App.jsx` に責務が集まっており、今後はコンポーネント分割や設定画面の整理が必要です。
+主要機能は揃っており、フロントエンドも `components` / `utils` に分割済みです。次の課題は、より大きいプロジェクト向けのコンテキスト制御、差分 UX の強化、設定画面の整理です。
 
 ## Future Ideas
 
-- 差分表示つきの `Fix Preview`
-- プロジェクト保存形式の改善
 - より大きいプロジェクト向けのコンテキスト圧縮
 - Monaco Editor ベースの編集体験
+- ファイル単位 `Fix` の差分表示
+- 保存データの export / import
 - Tauri 化の本格対応

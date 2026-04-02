@@ -593,6 +593,72 @@ textarea {
   line-height: 1.7;
 }
 
+.project-fix-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.diff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.diff-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+
+.diff-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: #dbeafe;
+  font-size: 0.92rem;
+}
+
+.diff-output {
+  margin: 0;
+  padding: 14px;
+  max-height: 240px;
+  overflow: auto;
+  background: rgba(2, 6, 23, 0.3);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 10px;
+  padding: 1px 0;
+}
+
+.diff-line.added {
+  color: #86efac;
+}
+
+.diff-line.removed {
+  color: #fca5a5;
+}
+
+.diff-line.context {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.diff-prefix {
+  text-align: center;
+}
+
 .chat-panel {
   gap: 14px;
 }
