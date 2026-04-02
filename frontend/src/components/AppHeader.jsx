@@ -3,7 +3,7 @@ export default function AppHeader({
   toolBusy,
   appMenuOpen,
   onToggleAppMenu,
-  onSaveApp,
+  onOpenSavedProjects,
   onCreateProject,
   onOpenChat,
   onOpenFilePicker,
@@ -33,8 +33,8 @@ export default function AppHeader({
               <div className="control-section inline menu-section">
                 <span className="control-label">Project</span>
                 <div className="control-buttons">
-                  <button className="ghost-button compact" onClick={onSaveApp}>
-                    Save App
+                  <button className="ghost-button compact" onClick={onOpenSavedProjects}>
+                    Saves
                   </button>
                   <button className="ghost-button compact" onClick={onCreateProject}>
                     New Project
