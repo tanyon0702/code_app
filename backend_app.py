@@ -13,10 +13,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from llama_client import LlamaClientError, generate_reply
+from llama_client import (
+    LlamaClientError,
+    ensure_server_ready,
+    estimate_runtime_requirements,
+    generate_reply,
+    get_runtime_config,
+    list_available_models,
+    update_runtime_config,
+)
 
 
-ALLOWED_ACTIONS = {"fix", "advice", "explain"}
+ALLOWED_ACTIONS = {"fix", "advice", "explain", "complete"}
 ALLOWED_PROJECT_ACTIONS = {"fix", "advice", "explain"}
 
 app = FastAPI(title="Local LLM Code Assistant API")
@@ -34,6 +42,7 @@ class CodeActionRequest(BaseModel):
     instruction: str = ""
     language: str = "plaintext"
     filename: str = ""
+    suffix: str = ""
 
 
 class ProjectFileRequest(BaseModel):
@@ -61,6 +70,19 @@ class ChatMessageRequest(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessageRequest]
     context: str = ""
+
+
+class RuntimeEstimateRequest(BaseModel):
+    model_path: str = ""
+    gpu_layers: int | None = None
+    ctx_size: int | None = None
+
+
+class RuntimeSettingsRequest(BaseModel):
+    model_path: str = ""
+    gpu_layers: int | None = None
+    ctx_size: int | None = None
+    load_now: bool = False
 
 
 def _validate_action(action: str) -> None:
@@ -99,6 +121,21 @@ def _build_code_action_prompt(action: str, request: CodeActionRequest) -> str:
             f"{file_info}"
             "コード:\n"
             f"{request.code}"
+        )
+
+    if action == "complete":
+        extra = request.instruction.strip() or "現在の文脈に自然につながるコードの続きを補完してください。"
+        return (
+            "以下のコード編集中の文脈から、カーソル位置に入る続きを補完してください。\n"
+            "必ず補完するコード断片だけを返してください。説明文、コードフェンス、見出しは禁止です。\n"
+            "既にある prefix や suffix を繰り返さず、自然につながる最小限の続きを返してください。\n"
+            f"追加要望: {extra}\n"
+            f"言語: {request.language}\n\n"
+            f"{file_info}"
+            "prefix:\n"
+            f"{request.code}\n\n"
+            "suffix:\n"
+            f"{request.suffix}"
         )
 
     extra = request.instruction.strip() or "コードの役割、流れ、重要なポイントをわかりやすく説明してください。"
@@ -164,6 +201,8 @@ def _estimate_max_tokens(action: str, code: str) -> int:
 
     if action == "fix":
         return max(1536, min(8192, estimated_tokens))
+    if action == "complete":
+        return max(128, min(1024, int(estimated_tokens * 0.2)))
     if action == "explain":
         return max(768, min(3072, int(estimated_tokens * 0.6)))
     return max(512, min(2048, int(estimated_tokens * 0.45)))
@@ -347,6 +386,44 @@ def _project_archive_bytes(request: ProjectArchiveRequest) -> io.BytesIO:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/runtime/models")
+def runtime_models() -> dict[str, Any]:
+    current = get_runtime_config()
+    return {
+        "current": current,
+        "models": list_available_models(current["gpu_layers"], current["ctx_size"]),
+    }
+
+
+@app.post("/api/runtime/estimate")
+def runtime_estimate(request: RuntimeEstimateRequest) -> dict[str, Any]:
+    try:
+        return {
+            "estimate": estimate_runtime_requirements(
+                model_path=request.model_path or None,
+                gpu_layers=request.gpu_layers,
+                ctx_size=request.ctx_size,
+            )
+        }
+    except LlamaClientError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/runtime/settings")
+def runtime_settings(request: RuntimeSettingsRequest) -> dict[str, Any]:
+    try:
+        current = update_runtime_config(
+            model_path=request.model_path or None,
+            gpu_layers=request.gpu_layers,
+            ctx_size=request.ctx_size,
+        )
+        if request.load_now:
+            current = ensure_server_ready()
+        return {"current": current}
+    except LlamaClientError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/code/{action}")

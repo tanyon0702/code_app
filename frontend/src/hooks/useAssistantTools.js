@@ -19,6 +19,11 @@ export function useAssistantTools({
   const [projectFixPreview, setProjectFixPreview] = useState([]);
   const [projectFixDiffs, setProjectFixDiffs] = useState([]);
   const [projectFixComposer, setProjectFixComposer] = useState({ open: false, instruction: "" });
+  const [fileFixComposer, setFileFixComposer] = useState({
+    open: false,
+    instruction: "",
+    targetFile: null,
+  });
 
   function closeToolModal() {
     setToolModal({ open: false, mode: "", title: "", content: "" });
@@ -68,34 +73,124 @@ export function useAssistantTools({
     }
   }
 
-  function exportSnapshot(snapshotId) {
+  async function exportSnapshot(snapshotId, format = "json") {
     const snapshot = savedSnapshots.find((item) => item.id === snapshotId);
     if (!snapshot) {
       return;
     }
 
-    downloadProjectStateFromPayload(
-      {
-        app: "code-app",
-        version: 2,
-        exportedAt: snapshot.createdAt,
-        selectedProjectId: snapshot.selectedProjectId,
-        projects: snapshot.projects,
-      },
-      `${snapshot.name.replace(/[\\/:*?"<>|]/g, "_") || "code-app-projects"}.json`,
-    );
-    setStatus(`書き出しました: ${snapshot.name}`);
-  }
-
-  async function runCodeAction(action) {
-    if (!selectedFile || selectedFile.kind !== "text" || toolBusy) {
+    if (format === "json") {
+      downloadProjectStateFromPayload(
+        {
+          app: "code-app",
+          version: 2,
+          exportedAt: snapshot.createdAt,
+          selectedProjectId: snapshot.selectedProjectId,
+          projects: snapshot.projects,
+        },
+        `${snapshot.name.replace(/[\/:*?"<>|]/g, "_") || "code-app-projects"}.json`,
+      );
+      setStatus(`JSON を書き出しました: ${snapshot.name}`);
       return;
     }
 
-    const instruction =
-      action === "fix"
-        ? window.prompt("修正の要望があれば入力してください。空なら自動で修正します。", "") ?? ""
-        : "";
+    try {
+      setStatus("保存スナップショットを ZIP 化中...");
+      const response = await fetch(`${API_BASE}/api/project/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_name: snapshot.name,
+          files: snapshot.projects.flatMap((project) =>
+            project.files.map((file) => ({
+              filename: `${project.name}/${file.path}`,
+              content: file.content,
+              language: file.language,
+              kind: file.kind,
+            })),
+          ),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${snapshot.name.replace(/[\/:*?"<>|]/g, "_") || "snapshot"}.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setStatus(`ZIP を書き出しました: ${snapshot.name}`);
+    } catch (error) {
+      setToolModal({
+        open: true,
+        mode: "error",
+        title: "Export Error",
+        content: error.message,
+      });
+      setStatus("ZIP 書き出し失敗");
+    }
+  }
+
+  function openFileFixComposer(targetFile = selectedFile) {
+    if (!targetFile || targetFile.kind !== "text" || toolBusy) {
+      return;
+    }
+    setFileFixComposer({ open: true, instruction: "", targetFile });
+  }
+
+  async function requestCodeCompletion({ targetFile = selectedFile, prefix = "", suffix = "", instruction = "" } = {}) {
+    if (!targetFile || targetFile.kind !== "text" || toolBusy) {
+      return "";
+    }
+
+    setToolBusy(true);
+    setStatus("コード補完を生成中...");
+
+    try {
+      const response = await fetch(`${API_BASE}/api/code/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: prefix,
+          suffix,
+          instruction,
+          language: targetFile.language,
+          filename: targetFile.path,
+        }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.detail || "補完に失敗しました。");
+      }
+
+      setStatus("補完を挿入しました");
+      return payload.result ?? "";
+    } catch (error) {
+      setToolModal({
+        open: true,
+        mode: "error",
+        title: "Completion Error",
+        content: error.message,
+      });
+      setStatus("補完エラー");
+      return "";
+    } finally {
+      setToolBusy(false);
+    }
+  }
+
+  async function runCodeAction(action, options = {}) {
+    const targetFile = options.targetFile ?? selectedFile;
+    const instruction = action === "fix" ? (options.instruction ?? "") : "";
+
+    if (!targetFile || targetFile.kind !== "text" || toolBusy) {
+      return;
+    }
 
     setToolBusy(true);
     setFixPreview("");
@@ -118,10 +213,10 @@ export function useAssistantTools({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          code: selectedFile.content,
+          code: targetFile.content,
           instruction,
-          language: selectedFile.language,
-          filename: selectedFile.path,
+          language: targetFile.language,
+          filename: targetFile.path,
         }),
       });
 
@@ -254,6 +349,13 @@ export function useAssistantTools({
     await runProjectAction("fix", instruction);
   }
 
+  async function submitFileFixComposer() {
+    const instruction = fileFixComposer.instruction.trim();
+    const targetFile = fileFixComposer.targetFile ?? selectedFile;
+    setFileFixComposer({ open: false, instruction: "", targetFile: null });
+    await runCodeAction("fix", { instruction, targetFile });
+  }
+
   function applyFix(updateSelectedFileContent) {
     if (!selectedFile || selectedFile.kind !== "text" || !fixPreview) {
       return;
@@ -287,13 +389,18 @@ export function useAssistantTools({
     projectFixPreview,
     projectFixDiffs,
     projectFixComposer,
+    fileFixComposer,
+    setFileFixComposer,
     setProjectFixComposer,
     closeToolModal,
     downloadProjectArchive,
     exportSnapshot,
+    requestCodeCompletion,
     runCodeAction,
+    openFileFixComposer,
     openProjectFixComposer,
     runProjectAction,
+    submitFileFixComposer,
     submitProjectFixComposer,
     applyFix,
     applyProjectFix,

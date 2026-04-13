@@ -6,10 +6,13 @@ function TreeNodeList({
   selectedProject,
   collapsedFolders,
   editingNode,
+  toolBusy,
   onSelectFolder,
   onToggleFolder,
   onSelectFile,
   onRemoveFile,
+  onOpenFolderContextMenu,
+  onOpenFileContextMenu,
   onUpdateEditingNodeDraft,
   onCommitEditingNode,
   onCancelEditingNode,
@@ -27,6 +30,11 @@ function TreeNodeList({
             onClick={() => {
               onSelectFolder(node.path);
               onToggleFolder(node.path);
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onSelectFolder(node.path);
+              onOpenFolderContextMenu(event, node.path, toolBusy);
             }}
           >
             <span className="tree-caret">{collapsed ? "▸" : "▾"}</span>
@@ -62,10 +70,13 @@ function TreeNodeList({
               selectedProject={selectedProject}
               collapsedFolders={collapsedFolders}
               editingNode={editingNode}
+              toolBusy={toolBusy}
               onSelectFolder={onSelectFolder}
               onToggleFolder={onToggleFolder}
               onSelectFile={onSelectFile}
               onRemoveFile={onRemoveFile}
+              onOpenFolderContextMenu={onOpenFolderContextMenu}
+              onOpenFileContextMenu={onOpenFileContextMenu}
               onUpdateEditingNodeDraft={onUpdateEditingNodeDraft}
               onCommitEditingNode={onCommitEditingNode}
               onCancelEditingNode={onCancelEditingNode}
@@ -82,6 +93,11 @@ function TreeNodeList({
           className={`tree-row file-row ${selectedProject?.selectedFileId === file.id ? "selected" : ""}`}
           style={{ paddingLeft: `${12 + depth * 16}px` }}
           onClick={() => onSelectFile(file.id, file.path)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            onSelectFile(file.id, file.path);
+            onOpenFileContextMenu(event, file, toolBusy);
+          }}
         >
           <span className="tree-caret tree-caret-placeholder">•</span>
           <span className="tree-icon">{getFileIcon(file)}</span>
@@ -110,6 +126,7 @@ function TreeNodeList({
           <span className="tree-meta">{file.kind === "image" ? "image" : file.language}</span>
           <span
             className="file-remove"
+            onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
               onRemoveFile(file.id);
@@ -165,96 +182,55 @@ export default function ProjectSidebar(props) {
     toolBusy,
     collapsedFolders,
     editingNode,
-    onStartRenameProject,
     onCreateEmptyFile,
     onCreateFolder,
     onRenameSelectedNode,
     onDownloadProjectArchive,
-    onOpenProjectFixComposer,
-    onRunProjectAdvice,
-    onRunProjectExplain,
     onSelectFolder,
     onToggleFolder,
     onSelectFile,
     onRemoveFile,
+    onOpenFolderContextMenu,
+    onOpenFileContextMenu,
     onUpdateEditingNodeDraft,
     onCommitEditingNode,
     onCancelEditingNode,
   } = props;
 
   return (
-    <aside className="panel file-panel">
-      <div className="panel-header">
+    <aside className="panel file-panel explorer-panel">
+      <div className="panel-header explorer-header">
         <div>
-          <p className="panel-kicker">Project</p>
-          <h2>{selectedProject?.name ?? "Files"}</h2>
+          <p className="panel-kicker">Explorer</p>
+          <h2>{selectedProject?.name ?? "Project"}</h2>
         </div>
-        <span className="subtle-pill">{files.length} files</span>
+        <span className="subtle-pill">{files.length}</span>
       </div>
 
-      <div className="project-actions">
-        <div className="control-section">
-          <span className="control-label">Manage</span>
-          <div className="control-buttons">
-            <button
-              className="ghost-button compact"
-              onClick={() => selectedProject && onStartRenameProject(selectedProject)}
-              disabled={!selectedProject}
-            >
-              Rename Project
-            </button>
-            <button className="ghost-button compact" onClick={onCreateEmptyFile}>
-              New File
-            </button>
-            <button className="ghost-button compact" onClick={onCreateFolder}>
-              New Folder
-            </button>
-            <button
-              className="ghost-button compact"
-              onClick={onRenameSelectedNode}
-              disabled={!selectedProject || selectedProject.selectedNodeType === "root"}
-            >
-              Rename Node
-            </button>
-            <button
-              className="ghost-button compact"
-              onClick={onDownloadProjectArchive}
-              disabled={files.length === 0}
-            >
-              Download ZIP
-            </button>
-          </div>
-        </div>
-
-        <div className="control-section">
-          <span className="control-label">Project AI</span>
-          <div className="control-buttons">
-            <button
-              className="ghost-button compact accent"
-              onClick={onOpenProjectFixComposer}
-              disabled={files.length === 0 || toolBusy}
-            >
-              Project Fix
-            </button>
-            <button
-              className="ghost-button compact"
-              onClick={onRunProjectAdvice}
-              disabled={files.length === 0 || toolBusy}
-            >
-              Feedback
-            </button>
-            <button
-              className="ghost-button compact"
-              onClick={onRunProjectExplain}
-              disabled={files.length === 0 || toolBusy}
-            >
-              Explain
-            </button>
-          </div>
-        </div>
+      <div className="explorer-actions">
+        <button className="ghost-button compact" onClick={onCreateEmptyFile}>
+          New File
+        </button>
+        <button className="ghost-button compact" onClick={onCreateFolder}>
+          New Folder
+        </button>
+        <button
+          className="ghost-button compact"
+          onClick={onRenameSelectedNode}
+          disabled={!selectedProject || selectedProject.selectedNodeType === "root"}
+        >
+          Rename
+        </button>
+        <button
+          className="ghost-button compact"
+          onClick={onDownloadProjectArchive}
+          disabled={files.length === 0}
+        >
+          ZIP
+        </button>
       </div>
 
-      <div className="file-list tree-list">
+      <div className="file-list tree-list explorer-tree">
         {files.length === 0 ? (
           <div className="empty-state">アップロードしたファイルがここに表示されます。</div>
         ) : null}
@@ -265,10 +241,13 @@ export default function ProjectSidebar(props) {
           selectedProject={selectedProject}
           collapsedFolders={collapsedFolders}
           editingNode={editingNode}
+          toolBusy={toolBusy}
           onSelectFolder={onSelectFolder}
           onToggleFolder={onToggleFolder}
           onSelectFile={onSelectFile}
           onRemoveFile={onRemoveFile}
+          onOpenFolderContextMenu={onOpenFolderContextMenu}
+          onOpenFileContextMenu={onOpenFileContextMenu}
           onUpdateEditingNodeDraft={onUpdateEditingNodeDraft}
           onCommitEditingNode={onCommitEditingNode}
           onCancelEditingNode={onCancelEditingNode}

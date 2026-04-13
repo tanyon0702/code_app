@@ -228,6 +228,41 @@ export function useWorkspaceState(setStatus) {
     });
   }
 
+  function removeFolder(folderPath) {
+    patchSelectedProject((project) => {
+      const remainingFiles = project.files.filter(
+        (file) => file.path !== folderPath && !file.path.startsWith(`${folderPath}/`),
+      );
+      const remainingFolders = project.folders.filter(
+        (path) => path !== folderPath && !path.startsWith(`${folderPath}/`),
+      );
+      const fallbackFile = remainingFiles[0] ?? null;
+      const removingSelectedFolder =
+        project.selectedNodeType === "folder" &&
+        (project.selectedNodePath === folderPath || project.selectedNodePath.startsWith(`${folderPath}/`));
+      const removingSelectedFile =
+        project.selectedNodeType === "file" &&
+        project.selectedNodePath &&
+        (project.selectedNodePath === folderPath || project.selectedNodePath.startsWith(`${folderPath}/`));
+
+      return {
+        ...project,
+        files: remainingFiles,
+        folders: remainingFolders,
+        selectedFileId: removingSelectedFile ? (fallbackFile?.id ?? null) : project.selectedFileId,
+        selectedNodePath:
+          removingSelectedFolder || removingSelectedFile
+            ? (fallbackFile?.path ?? "")
+            : project.selectedNodePath,
+        selectedNodeType:
+          removingSelectedFolder || removingSelectedFile
+            ? (fallbackFile ? "file" : "root")
+            : project.selectedNodeType,
+      };
+    });
+    setStatus(`Removed folder ${folderPath}`);
+  }
+
   function selectFolder(path) {
     patchSelectedProject((project) => ({
       ...project,
@@ -471,6 +506,7 @@ export function useWorkspaceState(setStatus) {
   return {
     projects,
     selectedProjectId,
+    setSelectedProjectId,
     selectedProject,
     files,
     folders,
@@ -501,6 +537,7 @@ export function useWorkspaceState(setStatus) {
     handleDrop,
     updateSelectedFileContent,
     removeFile,
+    removeFolder,
     selectFolder,
     toggleFolder,
     selectFile,

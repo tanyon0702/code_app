@@ -1,5 +1,6 @@
 export default function ProjectFixComposerModal({
   open,
+  mode = "project",
   instruction,
   onClose,
   onChangeInstruction,
@@ -14,7 +15,7 @@ export default function ProjectFixComposerModal({
       <section className="prompt-modal panel" onClick={(event) => event.stopPropagation()}>
         <div className="panel-header">
           <div>
-            <p className="panel-kicker">Project Fix</p>
+            <p className="panel-kicker">{mode === "file" ? "File Fix" : "Project Fix"}</p>
             <h2>修正要望を入力</h2>
           </div>
           <button className="ghost-button" onClick={onClose}>
@@ -23,7 +24,9 @@ export default function ProjectFixComposerModal({
         </div>
 
         <p className="prompt-copy">
-          追加の修正要望があれば入力してください。空のまま送ると、自動で全体整合性ベースの修正を行います。
+          {mode === "file"
+            ? "追加の修正要望があれば入力してください。空のまま送ると、選択中ファイルを自動で修正します。"
+            : "追加の修正要望があれば入力してください。空のまま送ると、自動で全体整合性ベースの修正を行います。"}
         </p>
 
         <textarea
@@ -46,7 +49,7 @@ export default function ProjectFixComposerModal({
             Cancel
           </button>
           <button className="primary-button" onClick={onSubmit}>
-            Start Project Fix
+            {mode === "file" ? "Start Fix" : "Start Project Fix"}
           </button>
         </div>
       </section>

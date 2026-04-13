@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 function formatDate(value) {
   try {
     return new Date(value).toLocaleString();
@@ -15,6 +17,8 @@ export default function SavedProjectsModal({
   onExportSnapshot,
   onDeleteSnapshot,
 }) {
+  const [expandedExportId, setExpandedExportId] = useState(null);
+
   if (!open) {
     return null;
   }
@@ -38,7 +42,7 @@ export default function SavedProjectsModal({
         </div>
 
         <p className="prompt-copy">
-          ここに保存したスナップショットを読み込み、書き出し、削除できます。
+          ここに保存したスナップショットを読み込み、JSON または ZIP で書き出し、削除できます。
         </p>
 
         <div className="saved-list">
@@ -46,26 +50,58 @@ export default function SavedProjectsModal({
             <div className="empty-state">まだ保存されたスナップショットはありません。</div>
           ) : null}
 
-          {snapshots.map((snapshot) => (
-            <article key={snapshot.id} className="saved-item">
-              <div className="saved-item-main">
-                <strong>{snapshot.name}</strong>
-                <span>{formatDate(snapshot.createdAt)}</span>
-                <span>{snapshot.projects.length} project(s)</span>
-              </div>
-              <div className="control-buttons">
-                <button className="ghost-button compact" onClick={() => onLoadSnapshot(snapshot.id)}>
-                  Load
-                </button>
-                <button className="ghost-button compact" onClick={() => onExportSnapshot(snapshot.id)}>
-                  Export
-                </button>
-                <button className="ghost-button compact" onClick={() => onDeleteSnapshot(snapshot.id)}>
-                  Delete
-                </button>
-              </div>
-            </article>
-          ))}
+          {snapshots.map((snapshot) => {
+            const exportOpen = expandedExportId === snapshot.id;
+            return (
+              <article key={snapshot.id} className="saved-item">
+                <div className="saved-item-main">
+                  <strong>{snapshot.name}</strong>
+                  <span>{formatDate(snapshot.createdAt)}</span>
+                  <span>{snapshot.projects.length} project(s)</span>
+                </div>
+                <div className="saved-item-actions">
+                  <div className="control-buttons">
+                    <button className="ghost-button compact" onClick={() => onLoadSnapshot(snapshot.id)}>
+                      Load
+                    </button>
+                    <div className="saved-export-anchor">
+                      <button
+                        className="ghost-button compact"
+                        onClick={() => setExpandedExportId((current) => (current === snapshot.id ? null : snapshot.id))}
+                      >
+                        Export
+                      </button>
+                      {exportOpen ? (
+                        <div className="saved-export-menu panel">
+                          <button
+                            className="ghost-button compact"
+                            onClick={() => {
+                              onExportSnapshot(snapshot.id, "json");
+                              setExpandedExportId(null);
+                            }}
+                          >
+                            JSON
+                          </button>
+                          <button
+                            className="ghost-button compact"
+                            onClick={() => {
+                              onExportSnapshot(snapshot.id, "zip");
+                              setExpandedExportId(null);
+                            }}
+                          >
+                            ZIP
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    <button className="ghost-button compact" onClick={() => onDeleteSnapshot(snapshot.id)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
     </div>

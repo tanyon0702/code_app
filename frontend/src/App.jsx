@@ -1,23 +1,29 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AppHeader from "./components/AppHeader";
 import AssistantModal from "./components/AssistantModal";
 import ChatModal from "./components/ChatModal";
+import ContextMenu from "./components/ContextMenu";
 import EditorPanel from "./components/EditorPanel";
 import ProjectFixComposerModal from "./components/ProjectFixComposerModal";
 import ProjectSidebar from "./components/ProjectSidebar";
 import ProjectTabs from "./components/ProjectTabs";
+import RuntimeSettingsModal from "./components/RuntimeSettingsModal";
 import SavedProjectsModal from "./components/SavedProjectsModal";
 import { useAssistantTools } from "./hooks/useAssistantTools";
 import { useChatState } from "./hooks/useChatState";
+import { useRuntimeSettings } from "./hooks/useRuntimeSettings";
 import { useWorkspaceState } from "./hooks/useWorkspaceState";
 import { downloadTextFile } from "./utils/fileUtils";
 
 export default function App() {
   const [status, setStatus] = useState("ファイルを追加してください");
+  const [contextMenu, setContextMenu] = useState({ open: false, x: 0, y: 0, items: [], title: "" });
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
   const inputRef = useRef(null);
 
   const workspace = useWorkspaceState(setStatus);
   const chat = useChatState(setStatus, workspace.selectedFile);
+  const runtime = useRuntimeSettings(setStatus);
   const tools = useAssistantTools({
     selectedProject: workspace.selectedProject,
     selectedFile: workspace.selectedFile,
@@ -26,10 +32,150 @@ export default function App() {
     setStatus,
   });
 
+  useEffect(() => {
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setContextMenu((current) => ({ ...current, open: false }));
+      }
+    }
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, []);
+
+  function closeContextMenu() {
+    setContextMenu((current) => ({ ...current, open: false }));
+  }
+
+  function openProjectContextMenu(event, project) {
+    setContextMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      title: "Project",
+      items: [
+        {
+          label: "Rename Project",
+          onSelect: () => workspace.startProjectRename(project),
+        },
+        {
+          label: "Delete Project",
+          onSelect: () => workspace.removeProject(project.id),
+          danger: true,
+          disabled: workspace.projects.length <= 1,
+        },
+      ],
+    });
+  }
+
+  function openFolderContextMenu(event, folderPath, toolBusy) {
+    setContextMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      title: "Folder",
+      items: [
+        {
+          label: "New File",
+          onSelect: () => {
+            workspace.selectFolder(folderPath);
+            workspace.createEmptyFile();
+          },
+        },
+        {
+          label: "New Folder",
+          onSelect: () => {
+            workspace.selectFolder(folderPath);
+            workspace.createFolder();
+          },
+        },
+        {
+          label: "Rename",
+          onSelect: () => {
+            workspace.selectFolder(folderPath);
+            workspace.renameSelectedNode();
+          },
+        },
+        {
+          label: "Project Fix Here",
+          onSelect: () => {
+            workspace.selectFolder(folderPath);
+            tools.openProjectFixComposer();
+          },
+          disabled: toolBusy,
+        },
+        {
+          label: "Delete Folder",
+          onSelect: () => workspace.removeFolder(folderPath),
+          danger: true,
+        },
+      ],
+    });
+  }
+
+  function openFileContextMenu(event, file, toolBusy) {
+    setContextMenu({
+      open: true,
+      x: event.clientX,
+      y: event.clientY,
+      title: "File",
+      items: [
+        {
+          label: "Rename",
+          onSelect: () => {
+            workspace.selectFile(file.id, file.path);
+            workspace.renameSelectedNode();
+          },
+        },
+        {
+          label: "Delete",
+          onSelect: () => workspace.removeFile(file.id),
+          danger: true,
+        },
+        {
+          label: "Complete",
+          onSelect: () => {
+            workspace.selectFile(file.id, file.path);
+            setStatus("補完はエディタ上で Complete ボタンか Ctrl+Space を使ってください");
+          },
+          disabled: file.kind !== "text" || toolBusy,
+        },
+        {
+          label: "Fix",
+          onSelect: () => {
+            workspace.selectFile(file.id, file.path);
+            tools.openFileFixComposer(file);
+          },
+          disabled: file.kind !== "text" || toolBusy,
+        },
+        {
+          label: "Feedback",
+          onSelect: () => {
+            workspace.selectFile(file.id, file.path);
+            tools.runCodeAction("advice", { targetFile: file });
+          },
+          disabled: file.kind !== "text" || toolBusy,
+        },
+        {
+          label: "Explain",
+          onSelect: () => {
+            workspace.selectFile(file.id, file.path);
+            tools.runCodeAction("explain", { targetFile: file });
+          },
+          disabled: file.kind !== "text" || toolBusy,
+        },
+      ],
+    });
+  }
+
   return (
     <div
       className={`app-shell ${workspace.dragActive ? "drag-active" : ""}`}
-      onClick={() => workspace.setAppMenuOpen(false)}
+      onClick={() => {
+        workspace.setAppMenuOpen(false);
+        setAiMenuOpen(false);
+        closeContextMenu();
+      }}
       onDragEnter={(event) => {
         event.preventDefault();
         workspace.setDragActive(true);
@@ -46,16 +192,37 @@ export default function App() {
       }}
       onDrop={workspace.handleDrop}
     >
-      <div className="background-orb orb-one" />
-      <div className="background-orb orb-two" />
-
       <AppHeader
-        status={status}
-        toolBusy={tools.toolBusy}
         appMenuOpen={workspace.appMenuOpen}
-        onToggleAppMenu={() => workspace.setAppMenuOpen((current) => !current)}
+        aiMenuOpen={aiMenuOpen}
+        toolBusy={tools.toolBusy}
+        hasProjectFiles={workspace.files.length > 0}
+        onToggleAppMenu={() => {
+          setAiMenuOpen(false);
+          workspace.setAppMenuOpen((current) => !current);
+        }}
+        onToggleAiMenu={() => {
+          workspace.setAppMenuOpen(false);
+          setAiMenuOpen((current) => !current);
+        }}
+        onOpenRuntimeSettings={() => {
+          workspace.setAppMenuOpen(false);
+          runtime.openRuntimeSettings();
+        }}
         onOpenSavedProjects={() => workspace.setSavedProjectsOpen(true)}
         onCreateProject={workspace.createNewProject}
+        onOpenProjectFixComposer={() => {
+          setAiMenuOpen(false);
+          tools.openProjectFixComposer();
+        }}
+        onRunProjectAdvice={() => {
+          setAiMenuOpen(false);
+          tools.runProjectAction("advice");
+        }}
+        onRunProjectExplain={() => {
+          setAiMenuOpen(false);
+          tools.runProjectAction("explain");
+        }}
         onOpenChat={(event) => {
           event?.stopPropagation?.();
           chat.setChatOpen(true);
@@ -64,19 +231,22 @@ export default function App() {
         onOpenFolderPicker={() => document.getElementById("folder-input")?.click()}
         inputRef={inputRef}
         onFileUpload={workspace.handleFileUpload}
-      />
-
-      <ProjectTabs
-        projects={workspace.projects}
-        selectedProjectId={workspace.selectedProjectId}
-        editingProjectId={workspace.editingProjectId}
-        editingProjectName={workspace.editingProjectName}
-        onSelectProject={workspace.setSelectedProjectId}
-        onStartRenameProject={workspace.startProjectRename}
-        onChangeEditingProjectName={workspace.setEditingProjectName}
-        onCommitProjectRename={workspace.commitProjectRename}
-        onCancelProjectRename={workspace.cancelProjectRename}
-        onRemoveProject={workspace.removeProject}
+        projectTabs={(
+          <ProjectTabs
+            projects={workspace.projects}
+            selectedProjectId={workspace.selectedProjectId}
+            editingProjectId={workspace.editingProjectId}
+            editingProjectName={workspace.editingProjectName}
+            onCreateProject={workspace.createNewProject}
+            onSelectProject={workspace.setSelectedProjectId}
+            onStartRenameProject={workspace.startProjectRename}
+            onChangeEditingProjectName={workspace.setEditingProjectName}
+            onCommitProjectRename={workspace.commitProjectRename}
+            onCancelProjectRename={workspace.cancelProjectRename}
+            onRemoveProject={workspace.removeProject}
+            onOpenProjectContextMenu={openProjectContextMenu}
+          />
+        )}
       />
 
       <main className="workspace-grid code-layout">
@@ -99,6 +269,8 @@ export default function App() {
           onToggleFolder={workspace.toggleFolder}
           onSelectFile={workspace.selectFile}
           onRemoveFile={workspace.removeFile}
+          onOpenFolderContextMenu={openFolderContextMenu}
+          onOpenFileContextMenu={openFileContextMenu}
           onUpdateEditingNodeDraft={workspace.updateEditingNodeDraft}
           onCommitEditingNode={workspace.commitEditingNode}
           onCancelEditingNode={workspace.cancelEditingNode}
@@ -108,9 +280,10 @@ export default function App() {
           selectedFile={workspace.selectedFile}
           toolBusy={tools.toolBusy}
           onLoadCurrentCodeIntoChat={chat.loadCurrentCodeIntoChat}
-          onRunFix={() => tools.runCodeAction("fix")}
+          onRunFix={() => tools.openFileFixComposer()}
           onRunAdvice={() => tools.runCodeAction("advice")}
           onRunExplain={() => tools.runCodeAction("explain")}
+          onRequestCompletion={tools.requestCodeCompletion}
           onDownloadSelectedFile={() =>
             workspace.selectedFile &&
             downloadTextFile(workspace.selectedFile.name, workspace.selectedFile.content)
@@ -142,6 +315,18 @@ export default function App() {
       />
 
       <ProjectFixComposerModal
+        mode="file"
+        open={tools.fileFixComposer.open}
+        instruction={tools.fileFixComposer.instruction}
+        onClose={() => tools.setFileFixComposer({ open: false, instruction: "", targetFile: null })}
+        onChangeInstruction={(value) =>
+          tools.setFileFixComposer((current) => ({ ...current, instruction: value }))
+        }
+        onSubmit={tools.submitFileFixComposer}
+      />
+
+      <ProjectFixComposerModal
+        mode="project"
         open={tools.projectFixComposer.open}
         instruction={tools.projectFixComposer.instruction}
         onClose={() => tools.setProjectFixComposer({ open: false, instruction: "" })}
@@ -178,6 +363,25 @@ export default function App() {
         onExportSnapshot={tools.exportSnapshot}
         onDeleteSnapshot={workspace.deleteSnapshot}
       />
+
+      <RuntimeSettingsModal
+        open={runtime.runtimeOpen}
+        loading={runtime.loading}
+        saving={runtime.saving}
+        error={runtime.error}
+        current={runtime.current}
+        models={runtime.models}
+        selectedModel={runtime.selectedModel}
+        form={runtime.form}
+        estimate={runtime.estimate}
+        estimateBusy={runtime.estimateBusy}
+        onClose={() => runtime.setRuntimeOpen(false)}
+        onChangeForm={(patch) => runtime.setForm((current) => ({ ...current, ...patch }))}
+        onApply={runtime.applyRuntimeSettings}
+        onLoadNow={() => runtime.applyRuntimeSettings(true)}
+      />
+
+      <ContextMenu menu={contextMenu} onClose={closeContextMenu} />
     </div>
   );
 }

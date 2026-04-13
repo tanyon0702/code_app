@@ -3,21 +3,57 @@ export default function ProjectTabs({
   selectedProjectId,
   editingProjectId,
   editingProjectName,
+  onCreateProject,
   onSelectProject,
   onStartRenameProject,
   onChangeEditingProjectName,
   onCommitProjectRename,
   onCancelProjectRename,
   onRemoveProject,
+  onOpenProjectContextMenu,
 }) {
+  function handleProjectContextMenu(event, project) {
+    event.preventDefault();
+    event.stopPropagation();
+    onSelectProject(project.id);
+    onOpenProjectContextMenu(event, project);
+  }
+
   return (
     <section className="project-strip">
+      <button
+        type="button"
+        className="project-tab project-tab-add"
+        onClick={(event) => {
+          event.stopPropagation();
+          onCreateProject();
+        }}
+        aria-label="Create project"
+      >
+        <span className="project-tab-plus">+</span>
+      </button>
+
       {projects.map((project) => (
-        <button
+        <div
           key={project.id}
           className={`project-tab ${project.id === selectedProjectId ? "selected" : ""}`}
-          onClick={() => onSelectProject(project.id)}
-          onDoubleClick={() => onStartRenameProject(project)}
+          role="button"
+          tabIndex={0}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelectProject(project.id);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onSelectProject(project.id);
+            }
+          }}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            onStartRenameProject(project);
+          }}
+          onContextMenu={(event) => handleProjectContextMenu(event, project)}
         >
           {editingProjectId === project.id ? (
             <input
@@ -43,17 +79,20 @@ export default function ProjectTabs({
           )}
 
           {projects.length > 1 ? (
-            <span
+            <button
+              type="button"
               className="project-remove"
               onClick={(event) => {
                 event.stopPropagation();
                 onRemoveProject(project.id);
               }}
+              onContextMenu={(event) => event.stopPropagation()}
+              aria-label={`Delete ${project.name}`}
             >
               ×
-            </span>
+            </button>
           ) : null}
-        </button>
+        </div>
       ))}
     </section>
   );
